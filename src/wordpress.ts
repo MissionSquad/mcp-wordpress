@@ -1,133 +1,135 @@
-// src/wordpress.ts
-import * as dotenv from 'dotenv';
-import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
-import { siteManager } from './config/site-manager.js';
+import axios, { type AxiosInstance, type AxiosResponse } from 'axios'
+import { getCurrentRequestClient, getCurrentRequestConfig, setCurrentRequestClient } from './request-context.js'
 
-// Legacy global WordPress API client instance for backward compatibility
-let wpClient: AxiosInstance;
+type HttpMethod = 'GET' | 'POST' | 'DELETE' | 'PUT'
 
-/**
- * Initialize the WordPress API client with authentication
- * Now uses SiteManager for multi-site support
- */
-export async function initWordPress() {
-  // Initialize the default site client
-  const client = await siteManager.getClient();
-  wpClient = client;
-  logToFile('WordPress client initialized successfully via SiteManager');
+interface RequestOptions {
+  headers?: Record<string, string>
+  isFormData?: boolean
+  rawResponse?: boolean
 }
 
-export function logToFile(message: string) {
-  // Logging disabled
-  return;
-}
+function buildBaseUrl(siteUrl: string): string {
+  const normalized = siteUrl.endsWith('/') ? siteUrl : `${siteUrl}/`
 
-/**
- * Make a request to the WordPress API
- * @param method HTTP method
- * @param endpoint API endpoint (relative to the baseURL)
- * @param data Request data
- * @param options Additional request options including siteId for multi-site support
- * @returns Response data
- */
-export async function makeWordPressRequest(
-  method: string, 
-  endpoint: string, 
-  data?: any, 
-  options?: {
-    headers?: Record<string, string>;
-    isFormData?: boolean;
-    rawResponse?: boolean;
-    siteId?: string;
-  }
-) {
-  // Get the appropriate client for the site
-  const client = options?.siteId 
-    ? await siteManager.getClient(options.siteId)
-    : (wpClient || await siteManager.getClient());
-
-  // Log data (skip for FormData which can't be stringified)
-  if (!options?.isFormData) {
-    logToFile(`Data: ${JSON.stringify(data, null, 2)}`);
-  } else {
-    logToFile('Request contains FormData (not shown in logs)');
-  }
-  
-  // Handle potential leading slash in endpoint
-  const path = endpoint.startsWith('/') ? endpoint.substring(1) : endpoint;
-
-  try {
-    const fullUrl = `${client.defaults.baseURL}${path}`;
-    
-    // Prepare request config
-    const requestConfig: any = {
-      method,
-      url: path,
-      headers: options?.headers || {}
-    };
-    
-    // Handle different data formats based on method and options
-    if (method === 'GET') {
-      requestConfig.params = data;
-    } else if (options?.isFormData) {
-      // For FormData, pass it directly without stringifying
-      requestConfig.data = data;
-    } else if (method === 'POST') {
-      requestConfig.data = JSON.stringify(data);
-    } else {
-      requestConfig.data = data;
+  if (!normalized.includes('/wp-json/wp/v2/')) {
+    if (normalized.includes('/wp-json/wp/v2')) {
+      return `${normalized}/`
     }
-    
-    const requestLog = `
-REQUEST:
-URL: ${fullUrl}
-Method: ${method}
-Site: ${options?.siteId || 'default'}
-Headers: ${JSON.stringify({...client.defaults.headers, ...requestConfig.headers}, null, 2)}
-Data: ${options?.isFormData ? '(FormData not shown)' : JSON.stringify(data, null, 2)}
-`;
-    logToFile(requestLog);
+    return `${normalized}wp-json/wp/v2/`
+  }
 
-    const response = await client.request(requestConfig);
-    
-    const responseLog = `
-RESPONSE:
-Status: ${response.status}
-Data: ${JSON.stringify(response.data, null, 2)}
-`;
-    logToFile(responseLog);
-    
-    return options?.rawResponse ? response : response.data;
-  } catch (error: any) {
-    const errorLog = `
-ERROR:
-Message: ${error.message}
-Status: ${error.response?.status || 'N/A'}
-Data: ${JSON.stringify(error.response?.data || {}, null, 2)}
-`;
-    logToFile(errorLog);
-    throw error;
+  return normalized.endsWith('/') ? normalized : `${normalized}/`
+}
+
+function createWordPressClient(): AxiosInstance {
+  const {
+    site: { siteUrl, username, password },
+  } = getCurrentRequestConfig()
+  const auth = Buffer.from(`${username}:${password}`).toString('base64')
+
+  return axios.create({
+    baseURL: buildBaseUrl(siteUrl),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Basic ${auth}`,
+    },
+  })
+}
+
+function getWordPressClient(): AxiosInstance {
+  const existing = getCurrentRequestClient()
+  if (existing) {
+    return existing
+  }
+
+  const client = createWordPressClient()
+  setCurrentRequestClient(client)
+  return client
+}
+
+export async function initWordPress(): Promise<void> {
+  // No startup connection is required. MissionSquad hidden secrets are resolved per tool call.
+}
+
+export function logToFile(_message: string): void {
+  // Logging disabled
+}
+
+export function getCurrentSiteSummary(): { id: 'current'; url: string; sqlEndpoint: string } {
+  const { site, sqlEndpoint } = getCurrentRequestConfig()
+  return {
+    id: 'current',
+    url: site.siteUrl,
+    sqlEndpoint,
   }
 }
 
-/**
- * Make a request to the WordPress.org Plugin Repository API
- * @param searchQuery Search query string
- * @param page Page number (1-based)
- * @param perPage Number of results per page
- * @returns Response data from WordPress.org Plugin API
- */
-export async function searchWordPressPluginRepository(searchQuery: string, page: number = 1, perPage: number = 10) {
+export function getCurrentSiteCacheKey(): string {
+  return getCurrentRequestConfig().site.siteUrl
+}
+
+export function getCurrentSqlEndpoint(): string {
+  return getCurrentRequestConfig().sqlEndpoint
+}
+
+export async function testCurrentSiteConnection(): Promise<{ success: boolean; error?: string }> {
   try {
-    // WordPress.org Plugin API endpoint
-    const apiUrl = 'https://api.wordpress.org/plugins/info/1.2/';
-    
-    // Build the request data according to WordPress.org Plugin API format
-    const requestData = {
+    const client = getWordPressClient()
+    await client.get('')
+    return { success: true }
+  } catch (error: any) {
+    return { success: false, error: error.message }
+  }
+}
+
+export async function makeWordPressRequest(
+  method: HttpMethod,
+  endpoint: string,
+  data?: unknown,
+  options?: RequestOptions,
+): Promise<any> {
+  const client = getWordPressClient()
+  const path = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint
+
+  const requestConfig: {
+    method: HttpMethod
+    url: string
+    headers: Record<string, string>
+    params?: unknown
+    data?: unknown
+  } = {
+    method,
+    url: path,
+    headers: options?.headers ?? {},
+  }
+
+  if (method === 'GET') {
+    requestConfig.params = data
+  } else if (options?.isFormData) {
+    requestConfig.data = data
+  } else if (method === 'POST') {
+    requestConfig.data = JSON.stringify(data)
+  } else {
+    requestConfig.data = data
+  }
+
+  const response = await client.request(requestConfig)
+  return options?.rawResponse ? response : response.data
+}
+
+export async function searchWordPressPluginRepository(
+  searchQuery: string,
+  page = 1,
+  perPage = 10,
+): Promise<any> {
+  const response = await axios.post(
+    'https://api.wordpress.org/plugins/info/1.2/',
+    {
       action: 'query_plugins',
       request: {
         search: searchQuery,
-        page: page,
+        page,
         per_page: perPage,
         fields: {
           description: true,
@@ -140,41 +142,16 @@ export async function searchWordPressPluginRepository(searchQuery: string, page:
           downloadlink: true,
           last_updated: true,
           homepage: true,
-          tags: true
-        }
-      }
-    };
-    
-    const requestLog = `
-WORDPRESS.ORG PLUGIN API REQUEST:
-URL: ${apiUrl}
-Data: ${JSON.stringify(requestData, null, 2)}
-`;
-    logToFile(requestLog);
-    
-    const response = await axios.post(apiUrl, requestData, {
+          tags: true,
+        },
+      },
+    },
+    {
       headers: {
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    const responseLog = `
-WORDPRESS.ORG PLUGIN API RESPONSE:
-Status: ${response.status}
-Info: ${JSON.stringify(response.data.info, null, 2)}
-Plugins Count: ${response.data.plugins?.length || 0}
-`;
-    logToFile(responseLog);
-    
-    return response.data;
-  } catch (error: any) {
-    const errorLog = `
-WORDPRESS.ORG PLUGIN API ERROR:
-Message: ${error.message}
-Status: ${error.response?.status || 'N/A'}
-Data: ${JSON.stringify(error.response?.data || {}, null, 2)}
-`;
-    logToFile(errorLog);
-    throw error;
-  }
+        'Content-Type': 'application/json',
+      },
+    },
+  )
+
+  return response.data
 }

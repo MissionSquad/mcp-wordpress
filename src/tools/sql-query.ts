@@ -1,7 +1,7 @@
 // src/tools/sql-query.ts
 import { z } from 'zod';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { makeWordPressRequest } from '../wordpress.js';
+import { getCurrentSqlEndpoint, makeWordPressRequest } from '../wordpress.js';
 
 // Schema for SQL query execution
 const executeSqlQuerySchema = z.object({
@@ -92,7 +92,7 @@ export const sqlQueryHandlers = {
 
       // Execute the query via the custom endpoint
       // Use environment variable or default to /mcp/v1/query
-      const sqlEndpoint = process.env.WORDPRESS_SQL_ENDPOINT || '/mcp/v1/query';
+      const sqlEndpoint = getCurrentSqlEndpoint();
       const response = await makeWordPressRequest(
         'POST',
         sqlEndpoint,
@@ -119,6 +119,13 @@ export const sqlQueryHandlers = {
     } catch (error: any) {
       // Check if it's a 404 error (endpoint not found)
       if (error.response?.status === 404) {
+        const expectedEndpoint = (() => {
+          try {
+            return getCurrentSqlEndpoint()
+          } catch {
+            return process.env.WORDPRESS_SQL_ENDPOINT || '/mcp/v1/query'
+          }
+        })()
         return {
           toolResult: {
             content: [{
@@ -127,8 +134,8 @@ export const sqlQueryHandlers = {
 
 To enable this feature, see the setup instructions in README.md under "Enabling SQL Query Tool (Optional)".
 
-Expected endpoint: ${process.env.WORDPRESS_SQL_ENDPOINT || '/mcp/v1/query'}
-You can customize this by setting the WORDPRESS_SQL_ENDPOINT environment variable.`
+Expected endpoint: ${expectedEndpoint}
+You can customize this by setting the hidden "sqlEndpoint" value or the WORDPRESS_SQL_ENDPOINT environment variable.`
             }],
             isError: true
           }

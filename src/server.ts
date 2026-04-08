@@ -1,104 +1,89 @@
 #!/usr/bin/env node
-// src/server.ts
-import * as dotenv from 'dotenv';
-dotenv.config(); // Load environment variables from .env first
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { allTools, toolHandlers } from './tools/index.js';
-import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import { z } from 'zod'
+import { FastMCP } from '@missionsquad/fastmcp'
+import { allTools, toolHandlers } from './tools/index.js'
+import { toUserError } from './errors.js'
+import { runWithRequestContext } from './request-context.js'
+import { routeConsoleStdoutToStderr } from './stdio-safe-console.js'
+import { initWordPress } from './wordpress.js'
 
+routeConsoleStdoutToStderr()
 
-// Create MCP server instance
-const server = new McpServer({
-    name: "wordpress",
-    version: "0.0.1"
-}, {
-    capabilities: {
-        tools: allTools.reduce((acc, tool) => {
-            acc[tool.name] = tool;
-            return acc;
-        }, {} as Record<string, any>)
-    }
-});
+const server = new FastMCP<undefined>({
+  name: 'wordpress',
+  version: '0.0.3',
+})
 
-// Register each tool from our tools list with its corresponding handler
+function extractToolText(result: unknown): string {
+  const toolResult = (result as { toolResult?: { content?: Array<{ text?: string }>; isError?: boolean } })?.toolResult
+  const text = toolResult?.content
+    ?.map((item) => item.text)
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .join('\n\n')
+
+  if (toolResult?.isError) {
+    throw new Error(text || 'Tool execution failed.')
+  }
+
+  return text || JSON.stringify(result, null, 2)
+}
+
 for (const tool of allTools) {
-    const handler = toolHandlers[tool.name as keyof typeof toolHandlers];
-    if (!handler) continue;
-    
-    const wrappedHandler = async (args: any) => {
-        // The handler functions are already typed with their specific parameter types
-        const result = await handler(args);
-        return {
-            content: result.toolResult.content.map((item: { type: string; text: string }) => ({
-                ...item,
-                type: "text" as const
-            })),
-            isError: result.toolResult.isError
-        };
-    };
-    
-    // console.log(`Registering tool: ${tool.name}`);
-    // console.log(`Input schema: ${JSON.stringify(tool.inputSchema)}`);
+  const handler = toolHandlers[tool.name as keyof typeof toolHandlers]
+  if (!handler) {
+    continue
+  }
 
-    // const zodSchema = z.any().optional();
-    // const jsonSchema = zodToJsonSchema(z.object(tool.inputSchema.properties as z.ZodRawShape));
+  const parameters = z.object(tool.inputSchema.properties as z.ZodRawShape)
 
-    // const schema = z.object(tool.inputSchema as z.ZodRawShape).catchall(z.unknown());
-    
-    // The inputSchema is already in JSON Schema format with properties
-    // server.tool(tool.name, tool.inputSchema.shape, wrappedHandler);
-    // const zodSchema = z.any().optional();
-    // const jsonSchema = zodToJsonSchema(z.object(tool.inputSchema.properties as z.ZodRawShape));
-    // const parsedSchema = z.any().optional().parse(jsonSchema);
-
-    const zodSchema = z.object(tool.inputSchema.properties as z.ZodRawShape); 
-    server.tool(tool.name, zodSchema.shape, wrappedHandler)
-
+  server.addTool({
+    name: tool.name,
+    description: tool.description ?? '',
+    parameters,
+    execute: async (args, context) => {
+      try {
+        return await runWithRequestContext(context.extraArgs, async () => {
+          const result = await (handler as (params: unknown) => Promise<unknown>)(args)
+          return extractToolText(result)
+        })
+      } catch (error) {
+        throw toUserError(error, `Tool ${tool.name} failed`)
+      }
+    },
+  })
 }
 
-async function main() {
-    const { logToFile } = await import('./wordpress.js');
-    logToFile('Starting WordPress MCP server...');
-
-    try {
-        logToFile('Initializing WordPress client...');
-        const { initWordPress } = await import('./wordpress.js');
-        await initWordPress();
-        logToFile('WordPress client initialized successfully.');
-
-        logToFile('Setting up server transport...');
-        const transport = new StdioServerTransport();
-        await server.connect(transport);
-        logToFile('WordPress MCP Server running on stdio');
-    } catch (error) {
-        logToFile(`Failed to initialize server: ${error}`);
-        process.exit(1);
-    }
+async function main(): Promise<void> {
+  await initWordPress()
+  await server.start({ transportType: 'stdio' })
 }
 
-// Handle process signals and errors
-// IMPORTANT: MCP uses stdout for JSON-RPC — never use console.log here
-process.on('SIGTERM', () => {
-    process.stderr.write('[SHUTDOWN] Received SIGTERM, shutting down...\n');
-    process.exit(0);
-});
+async function shutdown(exitCode: number): Promise<void> {
+  try {
+    await server.stop()
+  } finally {
+    process.exit(exitCode)
+  }
+}
+
 process.on('SIGINT', () => {
-    process.stderr.write('[SHUTDOWN] Received SIGINT, shutting down...\n');
-    process.exit(0);
-});
-process.on('uncaughtException', (error) => {
-    process.stderr.write(`[FATAL] Uncaught exception: ${error}\n`);
-    process.exit(1);
-});
-process.on('unhandledRejection', (error) => {
-    process.stderr.write(`[FATAL] Unhandled rejection: ${error}\n`);
-    process.exit(1);
-});
+  void shutdown(0)
+})
 
-main().catch((error) => {
-    process.stderr.write(`[FATAL] Startup error: ${error}\n`);
-    process.exit(1);
-});
+process.on('SIGTERM', () => {
+  void shutdown(0)
+})
+
+process.on('uncaughtException', () => {
+  void shutdown(1)
+})
+
+process.on('unhandledRejection', () => {
+  void shutdown(1)
+})
+
+void main().catch(() => {
+  void shutdown(1)
+})
+

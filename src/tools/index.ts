@@ -8,6 +8,7 @@ import { userTools, userHandlers } from './users.js';
 import { pluginRepositoryTools, pluginRepositoryHandlers } from './plugin-repository.js';
 import { commentTools, commentHandlers } from './comments.js';
 import { siteManagementTools, siteManagementHandlers } from './site-management.js';
+import { sqlQueryTools, sqlQueryHandlers } from './sql-query.js';
 
 // Combine all tools - now significantly reduced from ~65 to ~38 tools
 export const allTools: Tool[] = [
@@ -18,7 +19,8 @@ export const allTools: Tool[] = [
   ...userTools,                 // ~5 tools
   ...pluginRepositoryTools,     // ~2 tools
   ...commentTools,              // ~5 tools
-  ...siteManagementTools        // 3 tools (multi-site support)
+  ...siteManagementTools,       // 3 tools (current request site support)
+  ...sqlQueryTools
 ];
 
 // Combine all handlers
@@ -30,5 +32,6 @@ export const toolHandlers = {
   ...userHandlers,
   ...pluginRepositoryHandlers,
   ...commentHandlers,
-  ...siteManagementHandlers
+  ...siteManagementHandlers,
+  ...sqlQueryHandlers
 };
