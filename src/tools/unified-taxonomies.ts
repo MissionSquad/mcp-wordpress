@@ -1,27 +1,26 @@
 // src/tools/unified-taxonomies.ts
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { makeWordPressRequest, logToFile } from '../wordpress.js';
+import { getCurrentSiteCacheKey, makeWordPressRequest, logToFile } from '../wordpress.js';
 import { z } from 'zod';
 
-// Cache for taxonomies to reduce API calls
-let taxonomiesCache: any = null;
-let taxonomyCacheTimestamp: number = 0;
+const taxonomiesCache = new Map<string, { value: any; timestamp: number }>();
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 // Helper function to get all taxonomies with caching
 async function getTaxonomies(forceRefresh = false) {
   const now = Date.now();
+  const cacheKey = getCurrentSiteCacheKey();
+  const cached = taxonomiesCache.get(cacheKey);
   
-  if (!forceRefresh && taxonomiesCache && (now - taxonomyCacheTimestamp) < CACHE_DURATION) {
+  if (!forceRefresh && cached && (now - cached.timestamp) < CACHE_DURATION) {
     logToFile('Using cached taxonomies');
-    return taxonomiesCache;
+    return cached.value;
   }
 
   try {
     logToFile('Fetching taxonomies from API');
     const response = await makeWordPressRequest('GET', 'taxonomies');
-    taxonomiesCache = response;
-    taxonomyCacheTimestamp = now;
+    taxonomiesCache.set(cacheKey, { value: response, timestamp: now });
     return response;
   } catch (error: any) {
     logToFile(`Error fetching taxonomies: ${error.message}`);

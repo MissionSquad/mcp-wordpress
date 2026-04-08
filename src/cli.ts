@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 
 // Function to check if required environment variables are set
 function checkEnvironmentVariables() {
-  const requiredVars = ['WORDPRESS_API_URL', 'WORDPRESS_USERNAME', 'WORDPRESS_APP_PASSWORD'];
+  const requiredVars = ['WORDPRESS_API_URL', 'WORDPRESS_USERNAME', 'WORDPRESS_PASSWORD'];
   const missingVars = requiredVars.filter(varName => !process.env[varName]);
   
   if (missingVars.length > 0) {

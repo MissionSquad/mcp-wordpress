@@ -1,153 +1,157 @@
-// src/tools/site-management.ts
-import { z } from 'zod';
-import { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { siteManager } from '../config/site-manager.js';
+import { z } from 'zod'
+import { type Tool } from '@modelcontextprotocol/sdk/types.js'
+import { getCurrentSiteSummary, testCurrentSiteConnection } from '../wordpress.js'
 
-// Schemas
-const listSitesSchema = z.object({});
+const emptySchema = z.object({})
 
-const getSiteSchema = z.object({
-  site_id: z.string().optional().describe('Site ID to get details for. If not provided, returns the default site.')
-});
-
-const testSiteSchema = z.object({
-  site_id: z.string().optional().describe('Site ID to test connection. If not provided, tests the default site.')
-});
-
-// Tools
 export const siteManagementTools: Tool[] = [
   {
     name: 'list_sites',
-    description: 'List all configured WordPress sites. Shows site IDs, URLs, and which is the default.',
+    description: 'List the current WordPress site configuration available for this tool call.',
     inputSchema: {
       type: 'object',
-      properties: listSitesSchema.shape,
-      required: []
-    }
+      properties: emptySchema.shape,
+      required: [],
+    },
   },
   {
     name: 'get_site',
-    description: 'Get details about a specific WordPress site configuration.',
+    description: 'Get details about the current WordPress site configuration for this tool call.',
     inputSchema: {
       type: 'object',
-      properties: getSiteSchema.shape,
-      required: []
-    }
+      properties: emptySchema.shape,
+      required: [],
+    },
   },
   {
     name: 'test_site',
-    description: 'Test the connection to a specific WordPress site.',
+    description: 'Test the connection to the current WordPress site for this tool call.',
     inputSchema: {
       type: 'object',
-      properties: testSiteSchema.shape,
-      required: []
-    }
-  }
-];
+      properties: emptySchema.shape,
+      required: [],
+    },
+  },
+]
 
-// Handlers
 export const siteManagementHandlers = {
-  list_sites: async (params: z.infer<typeof listSitesSchema>) => {
+  list_sites: async (_params: z.infer<typeof emptySchema>) => {
     try {
-      const sites = siteManager.getAllSites();
-      const defaultSiteId = siteManager.getDefaultSiteId();
-
-      const sitesList = sites.map(site => ({
-        id: site.id,
-        url: site.url,
-        username: site.username,
-        aliases: site.aliases || [],
-        isDefault: site.id === defaultSiteId
-      }));
-
+      const site = getCurrentSiteSummary()
       return {
         toolResult: {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              sites: sitesList,
-              count: sites.length,
-              default_site: defaultSiteId
-            }, null, 2)
-          }]
-        }
-      };
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(
+                {
+                  sites: [
+                    {
+                      id: site.id,
+                      url: site.url,
+                      isDefault: true,
+                    },
+                  ],
+                  count: 1,
+                  default_site: site.id,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        },
+      }
     } catch (error: any) {
       return {
         toolResult: {
-          content: [{
-            type: 'text' as const,
-            text: `Error listing sites: ${error.message}`
-          }],
-          isError: true
-        }
-      };
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error listing sites: ${error.message}`,
+            },
+          ],
+          isError: true,
+        },
+      }
     }
   },
 
-  get_site: async (params: z.infer<typeof getSiteSchema>) => {
+  get_site: async (_params: z.infer<typeof emptySchema>) => {
     try {
-      const site = siteManager.getSite(params.site_id);
-      
+      const site = getCurrentSiteSummary()
       return {
         toolResult: {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              id: site.id,
-              url: site.url,
-              username: site.username,
-              aliases: site.aliases || [],
-              isDefault: site.id === siteManager.getDefaultSiteId()
-            }, null, 2)
-          }]
-        }
-      };
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(
+                {
+                  id: site.id,
+                  url: site.url,
+                  isDefault: true,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        },
+      }
     } catch (error: any) {
       return {
         toolResult: {
-          content: [{
-            type: 'text' as const,
-            text: `Error getting site: ${error.message}`
-          }],
-          isError: true
-        }
-      };
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error getting site: ${error.message}`,
+            },
+          ],
+          isError: true,
+        },
+      }
     }
   },
 
-  test_site: async (params: z.infer<typeof testSiteSchema>) => {
+  test_site: async (_params: z.infer<typeof emptySchema>) => {
     try {
-      const result = await siteManager.testSite(params.site_id);
-      const site = siteManager.getSite(params.site_id);
-      
+      const site = getCurrentSiteSummary()
+      const result = await testCurrentSiteConnection()
       return {
         toolResult: {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              site_id: site.id,
-              site_url: site.url,
-              success: result.success,
-              error: result.error || null,
-              message: result.success 
-                ? `Successfully connected to ${site.url}`
-                : `Failed to connect to ${site.url}: ${result.error}`
-            }, null, 2)
-          }],
-          isError: !result.success
-        }
-      };
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(
+                {
+                  site_id: site.id,
+                  site_url: site.url,
+                  success: result.success,
+                  error: result.error ?? null,
+                  message: result.success
+                    ? `Successfully connected to ${site.url}`
+                    : `Failed to connect to ${site.url}: ${result.error}`,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+          isError: !result.success,
+        },
+      }
     } catch (error: any) {
       return {
         toolResult: {
-          content: [{
-            type: 'text' as const,
-            text: `Error testing site: ${error.message}`
-          }],
-          isError: true
-        }
-      };
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error testing site: ${error.message}`,
+            },
+          ],
+          isError: true,
+        },
+      }
     }
-  }
-};
+  },
+}
