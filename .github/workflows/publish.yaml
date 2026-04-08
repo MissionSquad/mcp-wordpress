@@ -26,22 +26,18 @@ jobs:
           registry-url: 'https://registry.npmjs.org/'
           scope: '@missionsquad'
           cache: 'npm'
-          cache-dependency-path: mcp-wordpress/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install Dependencies
         run: npm ci
-        working-directory: mcp-wordpress
 
       - name: Build Project
         run: npm run build
-        working-directory: mcp-wordpress
 
       - name: Run Tests
         run: npm test
-        working-directory: mcp-wordpress
 
       - name: Publish to npm
         run: npm publish --access public
-        working-directory: mcp-wordpress
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
