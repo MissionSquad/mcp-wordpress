@@ -16,7 +16,32 @@ type ToolWithZodSchema = Tool & {
 export const getAcfSchemaSchema = z
   .object({
     target: z
-      .enum(['content', 'term', 'user'])
+      .preprocess((value) => {
+        if (typeof value !== 'string') {
+          return value
+        }
+
+        const normalized = value.trim().toLowerCase()
+        const aliases: Record<string, string> = {
+          post: 'content',
+          posts: 'content',
+          page: 'content',
+          pages: 'content',
+          cpt: 'content',
+          custom_post_type: 'content',
+          custom_post: 'content',
+          taxonomy: 'term',
+          terms: 'term',
+          category: 'term',
+          categories: 'term',
+          tag: 'term',
+          tags: 'term',
+          users: 'user',
+        }
+
+        return aliases[normalized] ?? normalized
+      }, z.enum(['content', 'term', 'user']))
+      .default('content')
       .describe('Schema target. Use content for posts/pages/CPTs, term for taxonomy terms, and user for users.'),
     content_type: z
       .preprocess((value) => (typeof value === 'string' && value.trim() === '' ? undefined : value), z.string().default('post'))
@@ -42,7 +67,7 @@ export const getAcfSchemaSchema = z
       .optional()
       .describe('Optional target ID. For users, this may also be "me". Omit to inspect the collection schema.'),
   })
-  .strict()
+  .passthrough()
 
 type GetAcfSchemaParams =
   | { target: 'content'; content_type: string; id?: number }
