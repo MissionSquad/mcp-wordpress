@@ -43,29 +43,11 @@ export const getAcfSchemaSchema = z
       }, z.enum(['content', 'term', 'user']))
       .default('content')
       .describe('Schema target. Use content for posts/pages/CPTs, term for taxonomy terms, and user for users.'),
-    content_type: z
+    resource: z
       .preprocess((value) => (typeof value === 'string' && value.trim() === '' ? undefined : value), z.string().default('post'))
-      .describe('Used only when target is content. WordPress post type slug, such as post, page, book, or product. Defaults to post.'),
-    taxonomy: z
-      .preprocess((value) => (typeof value === 'string' && value.trim() === '' ? undefined : value), z.string().default('category'))
-      .describe('Used only when target is term. WordPress taxonomy slug, such as category, post_tag, or genre. Defaults to category.'),
-    id: z
-      .preprocess((value) => {
-        if (typeof value === 'string') {
-          const trimmed = value.trim()
-          if (trimmed === '') {
-            return undefined
-          }
-          if (/^\d+$/.test(trimmed)) {
-            return Number(trimmed)
-          }
-          return trimmed
-        }
-
-        return value
-      }, z.union([z.number(), z.literal('me')]).optional())
-      .optional()
-      .describe('Optional target ID. For users, this may also be "me". Omit to inspect the collection schema.'),
+      .describe(
+        'Actual WordPress resource to inspect. For content use post, page, steals, or category-page. For terms use category or post_tag. For users use me or a numeric user ID. Defaults to post.',
+      ),
   })
   .passthrough()
 
@@ -86,6 +68,43 @@ function readPath(source: unknown, path: string[]): unknown {
 
     return current[key]
   }, source)
+}
+
+function readOptionalNonEmptyString(source: Record<string, unknown>, key: string): string | undefined {
+  const value = source[key]
+  if (typeof value !== 'string') {
+    return undefined
+  }
+
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+function readOptionalId(source: Record<string, unknown>, key: string): number | 'me' | undefined {
+  const value = source[key]
+
+  if (value === undefined || value === null) {
+    return undefined
+  }
+
+  if (typeof value === 'number' && Number.isInteger(value)) {
+    return value
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed.length === 0) {
+      return undefined
+    }
+    if (trimmed === 'me') {
+      return 'me'
+    }
+    if (/^\d+$/.test(trimmed)) {
+      return Number(trimmed)
+    }
+  }
+
+  throw new Error(`${key} must be a numeric ID or "me".`)
 }
 
 function findAcfSchemaDeep(source: unknown, depth = 0): Record<string, unknown> | null {
@@ -109,7 +128,7 @@ function findAcfSchemaDeep(source: unknown, depth = 0): Record<string, unknown> 
   }
 
   const acf = source.acf
-  if (isRecord(acf) && isRecord(acf.properties)) {
+  if (isRecord(acf) && Object.prototype.hasOwnProperty.call(acf, 'properties')) {
     return acf
   }
 
@@ -131,7 +150,7 @@ function extractAcfSchema(response: unknown): Record<string, unknown> | null {
   ]
 
   for (const candidate of candidates) {
-    if (isRecord(candidate) && isRecord(candidate.properties)) {
+    if (isRecord(candidate) && Object.prototype.hasOwnProperty.call(candidate, 'properties')) {
       return candidate
     }
   }
@@ -139,7 +158,7 @@ function extractAcfSchema(response: unknown): Record<string, unknown> | null {
   if (isRecord(response)) {
     for (const routeDefinition of Object.values(response)) {
       const routeAcfSchema = readPath(routeDefinition, ['schema', 'properties', 'acf'])
-      if (isRecord(routeAcfSchema) && isRecord(routeAcfSchema.properties)) {
+      if (isRecord(routeAcfSchema) && Object.prototype.hasOwnProperty.call(routeAcfSchema, 'properties')) {
         return routeAcfSchema
       }
     }
@@ -149,7 +168,7 @@ function extractAcfSchema(response: unknown): Record<string, unknown> | null {
   if (isRecord(routes)) {
     for (const routeDefinition of Object.values(routes)) {
       const routeAcfSchema = readPath(routeDefinition, ['schema', 'properties', 'acf'])
-      if (isRecord(routeAcfSchema) && isRecord(routeAcfSchema.properties)) {
+      if (isRecord(routeAcfSchema) && Object.prototype.hasOwnProperty.call(routeAcfSchema, 'properties')) {
         return routeAcfSchema
       }
     }
@@ -164,33 +183,43 @@ async function requestOptionsForResolvedRoute(route: RestRoute, id?: number): Pr
 }
 
 function validateGetAcfSchemaParams(params: z.infer<typeof getAcfSchemaSchema>): GetAcfSchemaParams {
+  const rawParams = params as Record<string, unknown>
+  const resource = readOptionalNonEmptyString(rawParams, 'resource') ?? 'post'
+  const id = readOptionalId(rawParams, 'id')
+
   if (params.target === 'content') {
-    if (params.id === 'me') {
+    if (id === 'me') {
       throw new Error('id must be numeric when target is "content".')
     }
 
     return {
       target: 'content',
-      content_type: params.content_type,
-      id: params.id,
+      content_type:
+        readOptionalNonEmptyString(rawParams, 'content_type') ??
+        readOptionalNonEmptyString(rawParams, 'contentType') ??
+        resource,
+      id,
     }
   }
 
   if (params.target === 'term') {
-    if (params.id === 'me') {
+    if (id === 'me') {
       throw new Error('id must be numeric when target is "term".')
     }
 
     return {
       target: 'term',
-      taxonomy: params.taxonomy,
-      id: params.id,
+      taxonomy: readOptionalNonEmptyString(rawParams, 'taxonomy') ?? resource,
+      id,
     }
   }
 
+  const userId =
+    id ?? (resource !== 'post' && resource !== 'user' && resource !== 'users' ? readOptionalId({ resource }, 'resource') : undefined)
+
   return {
     target: 'user',
-    id: params.id,
+    id: userId,
   }
 }
 
@@ -235,55 +264,32 @@ export const acfTools: ToolWithZodSchema[] = [
   {
     name: 'get_acf_schema',
     description:
-      'Discovers Advanced Custom Fields (ACF/ACF Pro) REST schema for content, terms, or users. Use this before writing unknown ACF fields. It returns only fields exposed by WordPress/ACF through REST; it does not infer database meta keys. When updating ACF fields, pass values under the nested "acf" object on the relevant create/update tool.',
+      'Discovers Advanced Custom Fields (ACF/ACF Pro) REST schema for content, terms, or users. Use target plus resource, for example {"target":"content","resource":"post"}, {"target":"content","resource":"page"}, {"target":"content","resource":"steals"}, {"target":"term","resource":"category"}, or {"target":"user","resource":"me"}. It returns only fields exposed by WordPress/ACF through REST; it does not infer database meta keys. When updating ACF fields, pass values under the nested "acf" object on the relevant create/update tool.',
     inputSchema: {
       type: 'object',
-      oneOf: [
-        {
-          type: 'object',
-          properties: {
-            target: { const: 'content', description: 'Posts, pages, and custom post types.' },
-            content_type: {
-              type: 'string',
-              description: 'WordPress post type slug, such as post, page, book, or product.',
-            },
-            id: {
-              type: 'number',
-              description: 'Optional content ID. Omit to inspect the collection schema.',
-            },
-          },
-          required: ['target', 'content_type'],
-          additionalProperties: false,
+      properties: {
+        target: {
+          type: 'string',
+          enum: ['content', 'term', 'user'],
+          default: 'content',
+          description:
+            'Resource kind to inspect. Use content for posts/pages/CPTs, term for taxonomies, or user for users.',
         },
-        {
-          type: 'object',
-          properties: {
-            target: { const: 'term', description: 'Categories, tags, and custom taxonomy terms.' },
-            taxonomy: {
-              type: 'string',
-              description: 'WordPress taxonomy slug, such as category, post_tag, or genre.',
-            },
-            id: {
-              type: 'number',
-              description: 'Optional term ID. Omit to inspect the collection schema.',
-            },
-          },
-          required: ['target', 'taxonomy'],
-          additionalProperties: false,
+        resource: {
+          type: 'string',
+          default: 'post',
+          description:
+            'Actual WordPress resource to inspect. For content use post, page, steals, or category-page. For terms use category or post_tag. For users use me or a numeric user ID.',
         },
-        {
-          type: 'object',
-          properties: {
-            target: { const: 'user', description: 'WordPress users.' },
-            id: {
-              anyOf: [{ type: 'number' }, { const: 'me' }],
-              description: 'Optional user ID, or "me" for the authenticated user.',
-            },
-          },
-          required: ['target'],
-          additionalProperties: false,
-        },
+      },
+      examples: [
+        { target: 'content', resource: 'post' },
+        { target: 'content', resource: 'page' },
+        { target: 'content', resource: 'steals' },
+        { target: 'term', resource: 'category' },
+        { target: 'user', resource: 'me' },
       ],
+      additionalProperties: true,
     },
     zodSchema: getAcfSchemaSchema,
   },
@@ -294,8 +300,9 @@ export const acfHandlers = {
     try {
       const { params, response, resolvedEndpoint } = await resolveAcfSchemaRequest(rawParams)
       const rawAcfSchema = extractAcfSchema(response)
-      const acfSchema = isRecord(rawAcfSchema?.properties) ? rawAcfSchema.properties : {}
-      const acfAvailable = Object.keys(acfSchema).length > 0
+      const rawAcfProperties = rawAcfSchema?.properties
+      const acfSchema = isRecord(rawAcfProperties) ? rawAcfProperties : {}
+      const acfAvailable = rawAcfSchema !== null
 
       return {
         toolResult: {
@@ -308,9 +315,13 @@ export const acfHandlers = {
                   resolved_endpoint: resolvedEndpoint,
                   acf_available: acfAvailable,
                   acf_schema: acfSchema,
+                  acf_properties: rawAcfProperties ?? null,
+                  acf_schema_has_field_properties: Object.keys(acfSchema).length > 0,
                   raw_acf_schema: rawAcfSchema,
                   message: acfAvailable
-                    ? 'ACF fields are exposed in the REST schema. Use these field names under the nested "acf" object when creating or updating.'
+                    ? Object.keys(acfSchema).length > 0
+                      ? 'ACF fields are exposed in the REST schema. Use these field names under the nested "acf" object when creating or updating.'
+                      : 'The REST schema exposes an ACF field data object, but it does not enumerate individual ACF field properties for this target. Reads may still include an acf key; writes require known field names from WordPress/ACF configuration.'
                     : 'No ACF schema was present in the REST OPTIONS response. ACF may be disabled, the field group may not have Show in REST API enabled, or no ACF field group applies to this target.',
                 },
                 null,
