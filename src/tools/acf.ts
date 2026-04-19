@@ -13,21 +13,34 @@ type ToolWithZodSchema = Tool & {
   zodSchema?: z.ZodTypeAny
 }
 
-const getAcfSchemaSchema = z
+export const getAcfSchemaSchema = z
   .object({
     target: z
       .enum(['content', 'term', 'user'])
       .describe('Schema target. Use content for posts/pages/CPTs, term for taxonomy terms, and user for users.'),
     content_type: z
-      .string()
+      .preprocess((value) => (typeof value === 'string' && value.trim() === '' ? undefined : value), z.string().optional())
       .optional()
       .describe('Required only when target is content. WordPress post type slug, such as post, page, book, or product.'),
     taxonomy: z
-      .string()
+      .preprocess((value) => (typeof value === 'string' && value.trim() === '' ? undefined : value), z.string().optional())
       .optional()
       .describe('Required only when target is term. WordPress taxonomy slug, such as category, post_tag, or genre.'),
     id: z
-      .union([z.number(), z.literal('me')])
+      .preprocess((value) => {
+        if (typeof value === 'string') {
+          const trimmed = value.trim()
+          if (trimmed === '') {
+            return undefined
+          }
+          if (/^\d+$/.test(trimmed)) {
+            return Number(trimmed)
+          }
+          return trimmed
+        }
+
+        return value
+      }, z.union([z.number(), z.literal('me')]).optional())
       .optional()
       .describe('Optional target ID. For users, this may also be "me". Omit to inspect the collection schema.'),
   })
