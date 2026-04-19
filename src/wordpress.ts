@@ -1,9 +1,9 @@
 import axios, { type AxiosInstance, type AxiosResponse } from 'axios'
 import { getCurrentRequestClient, getCurrentRequestConfig, setCurrentRequestClient } from './request-context.js'
 
-type HttpMethod = 'GET' | 'POST' | 'DELETE' | 'PUT'
+type HttpMethod = 'GET' | 'POST' | 'DELETE' | 'PUT' | 'OPTIONS'
 
-interface RequestOptions {
+export interface RequestOptions {
   headers?: Record<string, string>
   isFormData?: boolean
   rawResponse?: boolean
@@ -20,6 +20,16 @@ function buildBaseUrl(siteUrl: string): string {
   }
 
   return normalized.endsWith('/') ? normalized : `${normalized}/`
+}
+
+function buildRestUrl(siteUrl: string, namespace: string, endpoint: string): string {
+  const normalizedSiteUrl = siteUrl.endsWith('/') ? siteUrl.slice(0, -1) : siteUrl
+  const wpJsonIndex = normalizedSiteUrl.indexOf('/wp-json')
+  const siteRoot = wpJsonIndex >= 0 ? normalizedSiteUrl.slice(0, wpJsonIndex) : normalizedSiteUrl
+  const cleanNamespace = namespace.replace(/^\/+|\/+$/g, '')
+  const cleanEndpoint = endpoint.replace(/^\/+/, '')
+
+  return `${siteRoot}/wp-json/${cleanNamespace}/${cleanEndpoint}`
 }
 
 function createWordPressClient(): AxiosInstance {
@@ -76,7 +86,7 @@ export function getCurrentSqlEndpoint(): string {
 export async function testCurrentSiteConnection(): Promise<{ success: boolean; error?: string }> {
   try {
     const client = getWordPressClient()
-    await client.get('')
+    await client.get('users/me')
     return { success: true }
   } catch (error: any) {
     return { success: false, error: error.message }
@@ -91,7 +101,30 @@ export async function makeWordPressRequest(
 ): Promise<any> {
   const client = getWordPressClient()
   const path = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint
+  return makeRequest(client, method, path, data, options)
+}
 
+export async function makeWordPressRestRequest(
+  method: HttpMethod,
+  namespace: string,
+  endpoint: string,
+  data?: unknown,
+  options?: RequestOptions,
+): Promise<any> {
+  const client = getWordPressClient()
+  const {
+    site: { siteUrl },
+  } = getCurrentRequestConfig()
+  return makeRequest(client, method, buildRestUrl(siteUrl, namespace, endpoint), data, options)
+}
+
+async function makeRequest(
+  client: AxiosInstance,
+  method: HttpMethod,
+  path: string,
+  data?: unknown,
+  options?: RequestOptions,
+): Promise<any> {
   const requestConfig: {
     method: HttpMethod
     url: string

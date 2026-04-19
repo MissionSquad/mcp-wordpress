@@ -1,6 +1,6 @@
 {
   "name": "@missionsquad/mcp-wordpress",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A Model Context Protocol server for interacting with WordPress.",
   "type": "module",
   "main": "./build/server.js",
@@ -9,7 +9,7 @@
     "mcp-wp": "./build/server.js"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",
@@ -17,7 +17,9 @@
     "dev": "tsx watch src/server.ts",
     "clean": "rimraf build",
     "test": "vitest run",
+    "test:login": "tsx ./scripts/test-login.ts",
     "test:watch": "vitest",
+    "typecheck:scripts": "tsc --project tsconfig.scripts.json",
     "prepare": "npm run build"
   },
   "keywords": [

@@ -9,6 +9,7 @@ import { pluginRepositoryTools, pluginRepositoryHandlers } from './plugin-reposi
 import { commentTools, commentHandlers } from './comments.js';
 import { siteManagementTools, siteManagementHandlers } from './site-management.js';
 import { sqlQueryTools, sqlQueryHandlers } from './sql-query.js';
+import { acfTools, acfHandlers } from './acf.js';
 
 // Combine all tools - now significantly reduced from ~65 to ~38 tools
 export const allTools: Tool[] = [
@@ -20,6 +21,7 @@ export const allTools: Tool[] = [
   ...pluginRepositoryTools,     // ~2 tools
   ...commentTools,              // ~5 tools
   ...siteManagementTools,       // 3 tools (current request site support)
+  ...acfTools,                  // 1 tool (ACF schema discovery)
   ...sqlQueryTools
 ];
 
@@ -33,5 +35,6 @@ export const toolHandlers = {
   ...pluginRepositoryHandlers,
   ...commentHandlers,
   ...siteManagementHandlers,
+  ...acfHandlers,
   ...sqlQueryHandlers
 };

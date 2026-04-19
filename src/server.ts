@@ -35,7 +35,8 @@ for (const tool of allTools) {
     continue
   }
 
-  const parameters = z.object(tool.inputSchema.properties as z.ZodRawShape)
+  const toolDefinition = tool as typeof tool & { zodSchema?: z.ZodTypeAny }
+  const parameters = toolDefinition.zodSchema ?? z.object(tool.inputSchema.properties as z.ZodRawShape)
 
   server.addTool({
     name: tool.name,
@@ -86,4 +87,3 @@ process.on('unhandledRejection', () => {
 void main().catch(() => {
   void shutdown(1)
 })
-
