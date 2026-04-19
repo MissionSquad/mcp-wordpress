@@ -13,49 +13,30 @@ type ToolWithZodSchema = Tool & {
   zodSchema?: z.ZodTypeAny
 }
 
-const contentAcfSchemaTarget = z
+const getAcfSchemaSchema = z
   .object({
-    target: z.literal('content').describe('Use for posts, pages, and custom post types.'),
+    target: z
+      .enum(['content', 'term', 'user'])
+      .describe('Schema target. Use content for posts/pages/CPTs, term for taxonomy terms, and user for users.'),
     content_type: z
       .string()
-      .describe('WordPress post type slug, such as post, page, book, product, or another custom post type slug.'),
-    id: z
-      .number()
       .optional()
-      .describe('Optional content ID. Omit to inspect the collection schema for this post type.'),
-  })
-  .strict()
-
-const termAcfSchemaTarget = z
-  .object({
-    target: z.literal('term').describe('Use for categories, tags, and custom taxonomy terms.'),
+      .describe('Required only when target is content. WordPress post type slug, such as post, page, book, or product.'),
     taxonomy: z
       .string()
-      .describe('WordPress taxonomy slug, such as category, post_tag, genre, or another custom taxonomy slug.'),
-    id: z
-      .number()
       .optional()
-      .describe('Optional term ID. Omit to inspect the collection schema for this taxonomy.'),
-  })
-  .strict()
-
-const userAcfSchemaTarget = z
-  .object({
-    target: z.literal('user').describe('Use for ACF field groups attached to WordPress users.'),
+      .describe('Required only when target is term. WordPress taxonomy slug, such as category, post_tag, or genre.'),
     id: z
       .union([z.number(), z.literal('me')])
       .optional()
-      .describe('Optional user ID, or "me" for the authenticated user. Omit to inspect the users collection schema.'),
+      .describe('Optional target ID. For users, this may also be "me". Omit to inspect the collection schema.'),
   })
   .strict()
 
-const getAcfSchemaSchema = z.discriminatedUnion('target', [
-  contentAcfSchemaTarget,
-  termAcfSchemaTarget,
-  userAcfSchemaTarget,
-])
-
-type GetAcfSchemaParams = z.infer<typeof getAcfSchemaSchema>
+type GetAcfSchemaParams =
+  | { target: 'content'; content_type: string; id?: number }
+  | { target: 'term'; taxonomy: string; id?: number }
+  | { target: 'user'; id?: number | 'me' }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -146,12 +127,54 @@ async function requestOptionsForResolvedRoute(route: RestRoute, id?: number): Pr
   return makeRestRouteRequest('OPTIONS', route, suffix)
 }
 
+function validateGetAcfSchemaParams(params: z.infer<typeof getAcfSchemaSchema>): GetAcfSchemaParams {
+  if (params.target === 'content') {
+    if (!params.content_type) {
+      throw new Error('content_type is required when target is "content".')
+    }
+
+    if (params.id === 'me') {
+      throw new Error('id must be numeric when target is "content".')
+    }
+
+    return {
+      target: 'content',
+      content_type: params.content_type,
+      id: params.id,
+    }
+  }
+
+  if (params.target === 'term') {
+    if (!params.taxonomy) {
+      throw new Error('taxonomy is required when target is "term".')
+    }
+
+    if (params.id === 'me') {
+      throw new Error('id must be numeric when target is "term".')
+    }
+
+    return {
+      target: 'term',
+      taxonomy: params.taxonomy,
+      id: params.id,
+    }
+  }
+
+  return {
+    target: 'user',
+    id: params.id,
+  }
+}
+
 async function resolveAcfSchemaRequest(
-  params: GetAcfSchemaParams,
-): Promise<{ response: unknown; resolvedEndpoint: string }> {
+  rawParams: z.infer<typeof getAcfSchemaSchema>,
+): Promise<{ params: GetAcfSchemaParams; response: unknown; resolvedEndpoint: string }> {
+  const params = validateGetAcfSchemaParams(rawParams)
+
   if (params.target === 'content') {
     const route = await resolveContentRoute(params.content_type)
     return {
+      params,
       response: await requestOptionsForResolvedRoute(route, params.id),
       resolvedEndpoint: describeRestRoute({
         namespace: route.namespace,
@@ -163,6 +186,7 @@ async function resolveAcfSchemaRequest(
   if (params.target === 'term') {
     const route = await resolveTaxonomyRoute(params.taxonomy)
     return {
+      params,
       response: await requestOptionsForResolvedRoute(route, params.id),
       resolvedEndpoint: describeRestRoute({
         namespace: route.namespace,
@@ -173,6 +197,7 @@ async function resolveAcfSchemaRequest(
 
   const endpoint = params.id === undefined ? 'users' : `users/${params.id}`
   return {
+    params,
     response: await makeWordPressRequest('OPTIONS', endpoint),
     resolvedEndpoint: `wp/v2/${endpoint}`,
   }
@@ -237,9 +262,9 @@ export const acfTools: ToolWithZodSchema[] = [
 ]
 
 export const acfHandlers = {
-  get_acf_schema: async (params: GetAcfSchemaParams) => {
+  get_acf_schema: async (rawParams: z.infer<typeof getAcfSchemaSchema>) => {
     try {
-      const { response, resolvedEndpoint } = await resolveAcfSchemaRequest(params)
+      const { params, response, resolvedEndpoint } = await resolveAcfSchemaRequest(rawParams)
       const rawAcfSchema = extractAcfSchema(response)
       const acfSchema = isRecord(rawAcfSchema?.properties) ? rawAcfSchema.properties : {}
       const acfAvailable = Object.keys(acfSchema).length > 0
