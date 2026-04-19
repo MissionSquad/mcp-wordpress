@@ -19,13 +19,11 @@ export const getAcfSchemaSchema = z
       .enum(['content', 'term', 'user'])
       .describe('Schema target. Use content for posts/pages/CPTs, term for taxonomy terms, and user for users.'),
     content_type: z
-      .preprocess((value) => (typeof value === 'string' && value.trim() === '' ? undefined : value), z.string().optional())
-      .optional()
-      .describe('Required only when target is content. WordPress post type slug, such as post, page, book, or product.'),
+      .preprocess((value) => (typeof value === 'string' && value.trim() === '' ? undefined : value), z.string().default('post'))
+      .describe('Used only when target is content. WordPress post type slug, such as post, page, book, or product. Defaults to post.'),
     taxonomy: z
-      .preprocess((value) => (typeof value === 'string' && value.trim() === '' ? undefined : value), z.string().optional())
-      .optional()
-      .describe('Required only when target is term. WordPress taxonomy slug, such as category, post_tag, or genre.'),
+      .preprocess((value) => (typeof value === 'string' && value.trim() === '' ? undefined : value), z.string().default('category'))
+      .describe('Used only when target is term. WordPress taxonomy slug, such as category, post_tag, or genre. Defaults to category.'),
     id: z
       .preprocess((value) => {
         if (typeof value === 'string') {
@@ -142,10 +140,6 @@ async function requestOptionsForResolvedRoute(route: RestRoute, id?: number): Pr
 
 function validateGetAcfSchemaParams(params: z.infer<typeof getAcfSchemaSchema>): GetAcfSchemaParams {
   if (params.target === 'content') {
-    if (!params.content_type) {
-      throw new Error('content_type is required when target is "content".')
-    }
-
     if (params.id === 'me') {
       throw new Error('id must be numeric when target is "content".')
     }
@@ -158,10 +152,6 @@ function validateGetAcfSchemaParams(params: z.infer<typeof getAcfSchemaSchema>):
   }
 
   if (params.target === 'term') {
-    if (!params.taxonomy) {
-      throw new Error('taxonomy is required when target is "term".')
-    }
-
     if (params.id === 'me') {
       throw new Error('id must be numeric when target is "term".')
     }
