@@ -9,8 +9,7 @@ describe('getAcfSchemaSchema', () => {
 
     expect(parsed).toEqual({
       target: 'content',
-      content_type: 'post',
-      taxonomy: 'category',
+      resource: 'post',
     })
   })
 
@@ -24,20 +23,21 @@ describe('getAcfSchemaSchema', () => {
 
     expect(parsed).toEqual({
       target: 'content',
+      resource: 'post',
       content_type: 'post',
-      taxonomy: 'category',
-      id: undefined,
+      taxonomy: '',
+      id: '',
     })
   })
 
-  it('coerces numeric string ids from form inputs', () => {
+  it('accepts numeric string ids from form inputs', () => {
     const parsed = getAcfSchemaSchema.parse({
       target: 'content',
       content_type: 'post',
       id: '123',
     })
 
-    expect(parsed.id).toBe(123)
+    expect(parsed.id).toBe('123')
   })
 
   it('accepts common target aliases and extra llm-supplied fields', () => {
@@ -49,8 +49,8 @@ describe('getAcfSchemaSchema', () => {
 
     expect(parsed).toMatchObject({
       target: 'content',
+      resource: 'post',
       content_type: 'page',
-      taxonomy: 'category',
       reason: 'inspect ACF fields',
     })
   })
@@ -60,8 +60,7 @@ describe('getAcfSchemaSchema', () => {
 
     expect(parsed).toMatchObject({
       target: 'content',
-      content_type: 'post',
-      taxonomy: 'category',
+      resource: 'post',
     })
   })
 })

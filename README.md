@@ -90,7 +90,29 @@ Term read tools support `fields: ["acf"]` and `acf_format` for focused ACF reads
 
 - `get_acf_schema`
 
-Use `get_acf_schema` before writing unknown ACF fields. It checks the WordPress REST `OPTIONS` schema for content, taxonomy terms, or users and returns only fields exposed by ACF through REST. ACF writes must be sent under the nested `acf` object on the relevant create/update tool.
+Use `get_acf_schema` before writing unknown ACF fields. It checks the WordPress REST `OPTIONS` schema for content, taxonomy terms, or users and returns only fields exposed by ACF through REST. Use `target` plus `resource`, for example `{ "target": "content", "resource": "post" }`, `{ "target": "content", "resource": "steals" }`, `{ "target": "term", "resource": "category" }`, or `{ "target": "user", "resource": "me" }`. ACF writes must be sent under the nested `acf` object on the relevant create/update tool.
+
+Local ACF schema smoke test:
+
+```bash
+npm run test:acf-schema
+npm run test:acf-schema -- --target content --resource page
+npm run test:acf-schema -- --target content --resource steals
+npm run test:acf-schema -- --target term --resource category
+npm run test:acf-schema -- --target user --resource me
+```
+
+The script loads local `.env` configuration, invokes the same `get_acf_schema` handler used by the MCP server, and prints the normalized tool response.
+
+Local ACF content read smoke test:
+
+```bash
+npm run test:acf-content -- --content-type post --id 123
+npm run test:acf-content -- --content-type page --id 456
+npm run test:acf-content -- --content-type steals --per-page 10
+```
+
+This reads `id,slug,title,acf` with `acf_format=standard` through the same REST helpers used by the MCP content tools.
 
 ### Media
 
