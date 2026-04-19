@@ -71,7 +71,7 @@ These now describe the current request-scoped site only.
 - `find_content_by_url`
 - `get_content_by_slug`
 
-Content read tools support `fields: ["acf"]` and `acf_format` for focused ACF reads. Content create/update tools support a nested `acf` object for ACF/ACF Pro writes.
+Content read tools support `fields: ["acf"]` and `acf_format` for focused ACF reads. Content create/update tools support a nested `acf` object for ACF/ACF Pro writes. `create_content` defaults `content` to an empty string, so ACF-driven posts can be created with `title` plus `acf` without inventing a classic editor body.
 
 ### Taxonomies
 

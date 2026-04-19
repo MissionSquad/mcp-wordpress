@@ -113,7 +113,7 @@ const getContentSchema = z.object({
 const createContentSchema = z.object({
   content_type: z.string().describe("The content type slug"),
   title: z.string().describe("Content title"),
-  content: z.string().describe("Content body"),
+  content: z.string().optional().default('').describe("Content body. Optional for ACF-driven content; defaults to an empty string."),
   status: z.string().optional().default('draft').describe("Content status"),
   excerpt: z.string().optional().describe("Content excerpt"),
   slug: z.string().optional().describe("Content slug"),
@@ -201,7 +201,7 @@ export const unifiedContentTools: Tool[] = [
   },
   {
     name: "create_content",
-    description: "Creates new content of any type. To set ACF/ACF Pro fields, pass them under the nested acf object after verifying unknown fields with get_acf_schema.",
+    description: "Creates new content of any type. The content body is optional and defaults to an empty string, which is useful for ACF-driven posts. To set ACF/ACF Pro fields, pass them under the nested acf object after verifying unknown fields with get_acf_schema.",
     inputSchema: { type: "object", properties: createContentSchema.shape }
   },
   {
