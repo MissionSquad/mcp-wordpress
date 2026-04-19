@@ -1,42 +1,14 @@
 // src/tools/unified-content.ts
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { getCurrentSiteCacheKey, makeWordPressRequest, logToFile } from '../wordpress.js';
+import { logToFile } from '../wordpress.js';
 import { z } from 'zod';
-
-const postTypesCache = new Map<string, { value: any; timestamp: number }>();
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-
-// Helper function to get all post types with caching
-async function getPostTypes(forceRefresh = false) {
-  const now = Date.now();
-  const cacheKey = getCurrentSiteCacheKey();
-  const cached = postTypesCache.get(cacheKey);
-  
-  if (!forceRefresh && cached && (now - cached.timestamp) < CACHE_DURATION) {
-    logToFile('Using cached post types');
-    return cached.value;
-  }
-
-  try {
-    logToFile('Fetching post types from API');
-    const response = await makeWordPressRequest('GET', 'types');
-    postTypesCache.set(cacheKey, { value: response, timestamp: now });
-    return response;
-  } catch (error: any) {
-    logToFile(`Error fetching post types: ${error.message}`);
-    throw error;
-  }
-}
-
-// Helper function to get the correct endpoint for a content type
-function getContentEndpoint(contentType: string): string {
-  const endpointMap: Record<string, string> = {
-    'post': 'posts',
-    'page': 'pages'
-  };
-  
-  return endpointMap[contentType] || contentType;
-}
+import {
+  buildReadQueryParams,
+  getPostTypes,
+  makeRestRouteRequest,
+  resolveContentRoute,
+  type RestReadOptions,
+} from './rest-helpers.js';
 
 // Helper function to parse URL and extract slug and potential post type hints
 function parseUrl(url: string): { slug: string; pathHints: string[] } {
@@ -61,7 +33,7 @@ function parseUrl(url: string): { slug: string; pathHints: string[] } {
 }
 
 // Helper function to find content across multiple post types
-async function findContentAcrossTypes(slug: string, contentTypes?: string[]) {
+async function findContentAcrossTypes(slug: string, contentTypes?: string[], readOptions: RestReadOptions = {}) {
   const typesToSearch = contentTypes || [];
   
   // If no specific content types provided, get all available types
@@ -77,11 +49,11 @@ async function findContentAcrossTypes(slug: string, contentTypes?: string[]) {
   // Search each content type for the slug
   for (const contentType of typesToSearch) {
     try {
-      const endpoint = getContentEndpoint(contentType);
-      
-      const response = await makeWordPressRequest('GET', endpoint, {
+      const route = await resolveContentRoute(contentType);
+      const response = await makeRestRouteRequest('GET', route, '', {
         slug: slug,
-        per_page: 1
+        per_page: 1,
+        ...buildReadQueryParams(readOptions, ['id'])
       });
       
       if (Array.isArray(response) && response.length > 0) {
@@ -97,6 +69,21 @@ async function findContentAcrossTypes(slug: string, contentTypes?: string[]) {
 }
 
 // Schema definitions
+const restFieldsSchema = z
+  .array(z.string())
+  .optional()
+  .describe('Optional WordPress REST _fields selector. Use ["acf"] to return only ACF data, or entries like "acf.author", "id", and "title.rendered" for focused reads.');
+
+const acfFormatSchema = z
+  .enum(['light', 'standard'])
+  .optional()
+  .describe('Optional ACF REST output format. "light" is the ACF default raw/schema-aligned format; "standard" applies full ACF formatting for richer field values such as images.');
+
+const acfPayloadSchema = z
+  .record(z.unknown())
+  .optional()
+  .describe('Advanced Custom Fields (ACF/ACF Pro) field values. These are sent exactly as the nested WordPress REST "acf" object. Use get_acf_schema first when field names or value types are unknown.');
+
 const listContentSchema = z.object({
   content_type: z.string().describe("The content type slug (e.g., 'post', 'page', 'product', 'documentation')"),
   page: z.number().optional().describe("Page number (default 1)"),
@@ -111,12 +98,16 @@ const listContentSchema = z.object({
   orderby: z.string().optional().describe("Sort content by parameter"),
   order: z.enum(['asc', 'desc']).optional().describe("Order sort attribute"),
   after: z.string().optional().describe("ISO8601 date string to get content published after this date"),
-  before: z.string().optional().describe("ISO8601 date string to get content published before this date")
+  before: z.string().optional().describe("ISO8601 date string to get content published before this date"),
+  fields: restFieldsSchema,
+  acf_format: acfFormatSchema
 });
 
 const getContentSchema = z.object({
   content_type: z.string().describe("The content type slug"),
-  id: z.number().describe("Content ID")
+  id: z.number().describe("Content ID"),
+  fields: restFieldsSchema,
+  acf_format: acfFormatSchema
 });
 
 const createContentSchema = z.object({
@@ -134,7 +125,8 @@ const createContentSchema = z.object({
   format: z.string().optional().describe("Content format"),
   menu_order: z.number().optional().describe("Menu order (for pages)"),
   meta: z.record(z.any()).optional().describe("Meta fields"),
-  custom_fields: z.record(z.any()).optional().describe("Custom fields specific to this content type")
+  acf: acfPayloadSchema,
+  custom_fields: z.record(z.any()).optional().describe("Legacy top-level custom REST fields for this content type. Do not use for ACF; use the nested acf object instead.")
 });
 
 const updateContentSchema = z.object({
@@ -153,7 +145,8 @@ const updateContentSchema = z.object({
   format: z.string().optional().describe("Content format"),
   menu_order: z.number().optional().describe("Menu order"),
   meta: z.record(z.any()).optional().describe("Meta fields"),
-  custom_fields: z.record(z.any()).optional().describe("Custom fields")
+  acf: acfPayloadSchema,
+  custom_fields: z.record(z.any()).optional().describe("Legacy top-level custom REST fields. Do not use for ACF; use the nested acf object instead.")
 });
 
 const deleteContentSchema = z.object({
@@ -173,13 +166,16 @@ const findContentByUrlSchema = z.object({
     content: z.string().optional(),
     status: z.string().optional(),
     meta: z.record(z.any()).optional(),
-    custom_fields: z.record(z.any()).optional()
+    acf: acfPayloadSchema,
+    custom_fields: z.record(z.any()).optional().describe("Legacy top-level custom REST fields. Do not use for ACF; use the nested acf object instead.")
   }).optional().describe("Optional fields to update after finding the content")
 });
 
 const getContentBySlugSchema = z.object({
   slug: z.string().describe("The slug to search for"),
-  content_types: z.array(z.string()).optional().describe("Content types to search in (defaults to all)")
+  content_types: z.array(z.string()).optional().describe("Content types to search in (defaults to all)"),
+  fields: restFieldsSchema,
+  acf_format: acfFormatSchema
 });
 
 // Type definitions
@@ -195,22 +191,22 @@ type GetContentBySlugParams = z.infer<typeof getContentBySlugSchema>;
 export const unifiedContentTools: Tool[] = [
   {
     name: "list_content",
-    description: "Lists content of any type (posts, pages, or custom post types) with filtering and pagination",
+    description: "Lists content of any type (posts, pages, or custom post types) with filtering and pagination. ACF fields are returned when the site exposes them; use fields: [\"acf\"] and optional acf_format for focused ACF reads.",
     inputSchema: { type: "object", properties: listContentSchema.shape }
   },
   {
     name: "get_content",
-    description: "Gets specific content by ID and content type",
+    description: "Gets specific content by ID and content type. ACF fields are returned when the site exposes them; use fields: [\"acf\"] and optional acf_format for focused ACF reads.",
     inputSchema: { type: "object", properties: getContentSchema.shape }
   },
   {
     name: "create_content",
-    description: "Creates new content of any type",
+    description: "Creates new content of any type. To set ACF/ACF Pro fields, pass them under the nested acf object after verifying unknown fields with get_acf_schema.",
     inputSchema: { type: "object", properties: createContentSchema.shape }
   },
   {
     name: "update_content",
-    description: "Updates existing content of any type",
+    description: "Updates existing content of any type. To set ACF/ACF Pro fields, pass them under the nested acf object after verifying unknown fields with get_acf_schema.",
     inputSchema: { type: "object", properties: updateContentSchema.shape }
   },
   {
@@ -225,12 +221,12 @@ export const unifiedContentTools: Tool[] = [
   },
   {
     name: "find_content_by_url", 
-    description: "Finds content by its URL, automatically detecting the content type, and optionally updates it",
+    description: "Finds content by its URL, automatically detecting the content type, and optionally updates it. To update ACF/ACF Pro fields, pass them under update_fields.acf.",
     inputSchema: { type: "object", properties: findContentByUrlSchema.shape }
   },
   {
     name: "get_content_by_slug",
-    description: "Searches for content by slug across one or more content types",
+    description: "Searches for content by slug across one or more content types. ACF fields are returned when exposed; use fields: [\"acf\"] and optional acf_format for focused ACF reads.",
     inputSchema: { type: "object", properties: getContentBySlugSchema.shape }
   }
 ];
@@ -238,10 +234,13 @@ export const unifiedContentTools: Tool[] = [
 export const unifiedContentHandlers = {
   list_content: async (params: ListContentParams) => {
     try {
-      const endpoint = getContentEndpoint(params.content_type);
-      const { content_type, ...queryParams } = params;
+      const route = await resolveContentRoute(params.content_type);
+      const { content_type, fields, acf_format, ...queryParams } = params;
       
-      const response = await makeWordPressRequest('GET', endpoint, queryParams);
+      const response = await makeRestRouteRequest('GET', route, '', {
+        ...queryParams,
+        ...buildReadQueryParams({ fields, acf_format })
+      });
       
       return {
         toolResult: {
@@ -267,8 +266,13 @@ export const unifiedContentHandlers = {
 
   get_content: async (params: GetContentParams) => {
     try {
-      const endpoint = getContentEndpoint(params.content_type);
-      const response = await makeWordPressRequest('GET', `${endpoint}/${params.id}`);
+      const route = await resolveContentRoute(params.content_type);
+      const response = await makeRestRouteRequest(
+        'GET',
+        route,
+        `/${params.id}`,
+        buildReadQueryParams({ fields: params.fields, acf_format: params.acf_format })
+      );
       
       return {
         toolResult: {
@@ -294,7 +298,7 @@ export const unifiedContentHandlers = {
 
   create_content: async (params: CreateContentParams) => {
     try {
-      const endpoint = getContentEndpoint(params.content_type);
+      const route = await resolveContentRoute(params.content_type);
       
       const contentData: any = {
         title: params.title,
@@ -320,6 +324,9 @@ export const unifiedContentHandlers = {
       if (params.custom_fields) {
         Object.assign(contentData, params.custom_fields);
       }
+
+      // Add ACF fields using the documented nested acf REST payload.
+      if (params.acf !== undefined) contentData.acf = params.acf;
       
       // Remove undefined values
       Object.keys(contentData).forEach(key => {
@@ -328,7 +335,7 @@ export const unifiedContentHandlers = {
         }
       });
       
-      const response = await makeWordPressRequest('POST', endpoint, contentData);
+      const response = await makeRestRouteRequest('POST', route, '', contentData);
       
       return {
         toolResult: {
@@ -354,7 +361,7 @@ export const unifiedContentHandlers = {
 
   update_content: async (params: UpdateContentParams) => {
     try {
-      const endpoint = getContentEndpoint(params.content_type);
+      const route = await resolveContentRoute(params.content_type);
       
       const updateData: any = {};
       
@@ -377,8 +384,11 @@ export const unifiedContentHandlers = {
       if (params.custom_fields) {
         Object.assign(updateData, params.custom_fields);
       }
+
+      // Add ACF fields using the documented nested acf REST payload.
+      if (params.acf !== undefined) updateData.acf = params.acf;
       
-      const response = await makeWordPressRequest('POST', `${endpoint}/${params.id}`, updateData);
+      const response = await makeRestRouteRequest('POST', route, `/${params.id}`, updateData);
       
       return {
         toolResult: {
@@ -404,9 +414,9 @@ export const unifiedContentHandlers = {
 
   delete_content: async (params: DeleteContentParams) => {
     try {
-      const endpoint = getContentEndpoint(params.content_type);
+      const route = await resolveContentRoute(params.content_type);
       
-      const response = await makeWordPressRequest('DELETE', `${endpoint}/${params.id}`, {
+      const response = await makeRestRouteRequest('DELETE', route, `/${params.id}`, {
         force: params.force || false
       });
       
@@ -442,6 +452,7 @@ export const unifiedContentHandlers = {
         name: type.name,
         description: type.description,
         rest_base: type.rest_base,
+        rest_namespace: type.rest_namespace,
         hierarchical: type.hierarchical,
         supports: type.supports,
         taxonomies: type.taxonomies
@@ -523,7 +534,7 @@ export const unifiedContentHandlers = {
         
         // Update if requested
         if (params.update_fields) {
-          const endpoint = getContentEndpoint(contentType);
+          const route = await resolveContentRoute(contentType);
           
           const updateData: any = {};
           if (params.update_fields.title !== undefined) updateData.title = params.update_fields.title;
@@ -533,8 +544,9 @@ export const unifiedContentHandlers = {
           if (params.update_fields.custom_fields !== undefined) {
             Object.assign(updateData, params.update_fields.custom_fields);
           }
+          if (params.update_fields.acf !== undefined) updateData.acf = params.update_fields.acf;
           
-          const updatedContent = await makeWordPressRequest('POST', `${endpoint}/${content.id}`, updateData);
+          const updatedContent = await makeRestRouteRequest('POST', route, `/${content.id}`, updateData);
           
           return {
             toolResult: {
@@ -575,7 +587,7 @@ export const unifiedContentHandlers = {
       
       // Update if requested
       if (params.update_fields) {
-        const endpoint = getContentEndpoint(contentType);
+        const route = await resolveContentRoute(contentType);
         
         const updateData: any = {};
         if (params.update_fields.title !== undefined) updateData.title = params.update_fields.title;
@@ -585,8 +597,9 @@ export const unifiedContentHandlers = {
         if (params.update_fields.custom_fields !== undefined) {
           Object.assign(updateData, params.update_fields.custom_fields);
         }
+        if (params.update_fields.acf !== undefined) updateData.acf = params.update_fields.acf;
         
-        const updatedContent = await makeWordPressRequest('POST', `${endpoint}/${content.id}`, updateData);
+        const updatedContent = await makeRestRouteRequest('POST', route, `/${content.id}`, updateData);
         
         return {
           toolResult: {
@@ -636,7 +649,10 @@ export const unifiedContentHandlers = {
 
   get_content_by_slug: async (params: GetContentBySlugParams) => {
     try {
-      const result = await findContentAcrossTypes(params.slug, params.content_types);
+      const result = await findContentAcrossTypes(params.slug, params.content_types, {
+        fields: params.fields,
+        acf_format: params.acf_format,
+      });
       
       if (!result) {
         throw new Error(`No content found with slug: ${params.slug}`);

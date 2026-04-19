@@ -48,6 +48,7 @@ Legacy numbered `WORDPRESS_N_*` multi-site env configuration is no longer suppor
 - unified taxonomy tools
 - media, users, comments, plugins, and plugin-repository tools
 - optional SQL query tool with custom endpoint
+- ACF/ACF Pro REST support for exposed field groups on content, taxonomy terms, and users
 
 ## Tool Surface
 
@@ -70,6 +71,8 @@ These now describe the current request-scoped site only.
 - `find_content_by_url`
 - `get_content_by_slug`
 
+Content read tools support `fields: ["acf"]` and `acf_format` for focused ACF reads. Content create/update tools support a nested `acf` object for ACF/ACF Pro writes.
+
 ### Taxonomies
 
 - `discover_taxonomies`
@@ -80,6 +83,14 @@ These now describe the current request-scoped site only.
 - `delete_term`
 - `assign_terms_to_content`
 - `get_content_terms`
+
+Term read tools support `fields: ["acf"]` and `acf_format` for focused ACF reads. Term create/update tools support a nested `acf` object for ACF/ACF Pro writes.
+
+### ACF
+
+- `get_acf_schema`
+
+Use `get_acf_schema` before writing unknown ACF fields. It checks the WordPress REST `OPTIONS` schema for content, taxonomy terms, or users and returns only fields exposed by ACF through REST. ACF writes must be sent under the nested `acf` object on the relevant create/update tool.
 
 ### Media
 

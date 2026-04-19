@@ -4,6 +4,22 @@ import { makeWordPressRequest } from '../wordpress.js';
 import { WPUser } from '../types/wordpress-types.js';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { buildReadQueryParams } from './rest-helpers.js';
+
+const restFieldsSchema = z
+  .array(z.string())
+  .optional()
+  .describe('Optional WordPress REST _fields selector. Use ["acf"] to return only ACF user data, or entries like "acf.field_name", "id", and "name" for focused reads.');
+
+const acfFormatSchema = z
+  .enum(['light', 'standard'])
+  .optional()
+  .describe('Optional ACF REST output format. "light" is the ACF default raw/schema-aligned format; "standard" applies full ACF formatting.');
+
+const acfPayloadSchema = z
+  .record(z.unknown())
+  .optional()
+  .describe('Advanced Custom Fields (ACF/ACF Pro) values for this user. Sent exactly as the nested WordPress REST "acf" object. Use get_acf_schema first when field names or value types are unknown.');
 
 const listUsersSchema = z.object({
   page: z.number().optional().describe("Page number (default 1)"),
@@ -12,12 +28,16 @@ const listUsersSchema = z.object({
   context: z.enum(['view', 'embed', 'edit']).optional().describe("Scope under which the request is made"),
   orderby: z.enum(['id', 'include', 'name', 'registered_date', 'slug', 'email', 'url']).optional().describe("Sort users by parameter"),
   order: z.enum(['asc', 'desc']).optional().describe("Order sort attribute ascending or descending"),
-  roles: z.array(z.string()).optional().describe("Array of role names to filter by")
+  roles: z.array(z.string()).optional().describe("Array of role names to filter by"),
+  fields: restFieldsSchema,
+  acf_format: acfFormatSchema
 });
 
 const getUserSchema = z.object({
   id: z.number().describe("User ID"),
-  context: z.enum(['view', 'embed', 'edit']).optional().describe("Scope under which the request is made")
+  context: z.enum(['view', 'embed', 'edit']).optional().describe("Scope under which the request is made"),
+  fields: restFieldsSchema,
+  acf_format: acfFormatSchema
 }).strict();
 
 const createUserSchema = z.object({
@@ -32,7 +52,8 @@ const createUserSchema = z.object({
   nickname: z.string().optional().describe("Nickname for the user"),
   slug: z.string().optional().describe("Slug for the user"),
   roles: z.array(z.string()).optional().describe("Roles assigned to the user"),
-  password: z.string().describe("Password for the user")
+  password: z.string().describe("Password for the user"),
+  acf: acfPayloadSchema
 }).strict();
 
 const updateUserSchema = z.object({
@@ -48,7 +69,8 @@ const updateUserSchema = z.object({
   nickname: z.string().optional().describe("Nickname for the user"),
   slug: z.string().optional().describe("Slug for the user"),
   roles: z.array(z.string()).optional().describe("Roles assigned to the user"),
-  password: z.string().optional().describe("Password for the user")
+  password: z.string().optional().describe("Password for the user"),
+  acf: acfPayloadSchema
 }).strict();
 
 const deleteUserSchema = z.object({
@@ -66,22 +88,22 @@ type DeleteUserParams = z.infer<typeof deleteUserSchema>;
 export const userTools: Tool[] = [
   {
     name: "list_users",
-    description: "Lists all users with filtering, sorting, and pagination options",
+    description: "Lists all users with filtering, sorting, and pagination options. ACF user fields are returned when the site exposes them; use fields: [\"acf\"] and optional acf_format for focused ACF reads.",
     inputSchema: { type: "object", properties: listUsersSchema.shape }
   },
   {
     name: "get_user",
-    description: "Gets a user by ID",
+    description: "Gets a user by ID. ACF user fields are returned when the site exposes them; use fields: [\"acf\"] and optional acf_format for focused ACF reads.",
     inputSchema: { type: "object", properties: getUserSchema.shape }
   },
   {
     name: "create_user",
-    description: "Creates a new user",
+    description: "Creates a new user. To set ACF/ACF Pro user fields, pass them under the nested acf object after verifying unknown fields with get_acf_schema.",
     inputSchema: { type: "object", properties: createUserSchema.shape }
   },
   {
     name: "update_user",
-    description: "Updates an existing user",
+    description: "Updates an existing user. To set ACF/ACF Pro user fields, pass them under the nested acf object after verifying unknown fields with get_acf_schema.",
     inputSchema: { type: "object", properties: updateUserSchema.shape }
   },
   {
@@ -94,7 +116,11 @@ export const userTools: Tool[] = [
 export const userHandlers = {
   list_users: async (params: ListUsersParams) => {
     try {
-      const response = await makeWordPressRequest('GET', "users", params);
+      const { fields, acf_format, ...queryParams } = params;
+      const response = await makeWordPressRequest('GET', "users", {
+        ...queryParams,
+        ...buildReadQueryParams({ fields, acf_format })
+      });
       const users: WPUser[] = response;
       return {
         toolResult: {
@@ -113,7 +139,10 @@ export const userHandlers = {
   },
   get_user: async (params: GetUserParams) => {
     try {
-      const response = await makeWordPressRequest('GET', `users/${params.id}`, { context: params.context });
+      const response = await makeWordPressRequest('GET', `users/${params.id}`, {
+        context: params.context,
+        ...buildReadQueryParams({ fields: params.fields, acf_format: params.acf_format })
+      });
       const user: WPUser = response;
       return {
         toolResult: {
