@@ -1,6 +1,6 @@
 {
   "name": "@missionsquad/mcp-wordpress",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A Model Context Protocol server for interacting with WordPress.",
   "type": "module",
   "main": "./build/server.js",
